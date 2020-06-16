@@ -1,9 +1,20 @@
+#! /usr/bin/env python3
+# encoding: utf-8
+
+import bs4
 from bs4 import BeautifulSoup, element
-import urllib
+import requests
+import time
+import random
 import pandas as pd
 import numpy as np
 
-pages = 19
+NAV_BAR_ELEMENT_COUNT = 10
+DELAY_RANGE_FROM = 15
+DELAY_RANGE_TO = 30
+OUTPUT_FILENAME = "vgsales.csv"
+PAGES = 19
+
 rec_count = 0
 rank = []
 gname = []
@@ -20,27 +31,34 @@ sales_jp = []
 sales_ot = []
 sales_gl = []
 
-urlhead = 'http://www.vgchartz.com/gamedb/?page='
+urlhead = 'https://www.vgchartz.com/gamedb/?page='
 urltail = '&console=&region=All&developer=&publisher=&genre=&boxart=Both&ownership=Both'
 urltail += '&results=1000&order=Sales&showtotalsales=0&showtotalsales=1&showpublisher=0'
 urltail += '&showpublisher=1&showvgchartzscore=0&shownasales=1&showdeveloper=1&showcriticscore=1'
 urltail += '&showpalsales=0&showpalsales=1&showreleasedate=1&showuserscore=1&showjapansales=1'
 urltail += '&showlastupdate=0&showothersales=1&showgenre=1&sort=GL'
 
-for page in range(1, pages):
+def delay() -> None:
+    time.sleep(random.uniform(DELAY_RANGE_FROM, DELAY_RANGE_TO))
+    return None
+
+for page in range(1, PAGES):
     surl = urlhead + str(page) + urltail
-    r = urllib.request.urlopen(surl).read()
-    soup = BeautifulSoup(r)
+    
+    r: requests.Response = requests.get(surl)
+    while r.status_code != 200: # to avoid HTTP Error 429: Rate
+        print("Error in request, code " + str(r.status_code) + ". Trying again...")
+        delay()
+        r: requests.Response = requests.get(surl)
+    soup: bs4.BeautifulSoup = BeautifulSoup(r.content, "html.parser")
     print(f"Page: {page}")
 
     # vgchartz website is really weird so we have to search for
     # <a> tags with game urls
     game_tags = list(filter(
-        lambda x: x.attrs['href'].startswith('http://www.vgchartz.com/game/'),
-        # discard the first 10 elements because those
-        # links are in the navigation bar
+        lambda x: x.attrs['href'].startswith('https://www.vgchartz.com/game/'),
         soup.find_all("a")
-    ))[10:]
+    ))[NAV_BAR_ELEMENT_COUNT:]
 
     for tag in game_tags:
 
@@ -89,8 +107,12 @@ for page in range(1, pages):
 
         # go to every individual website to get genre info
         url_to_game = tag.attrs['href']
-        site_raw = urllib.request.urlopen(url_to_game).read()
-        sub_soup = BeautifulSoup(site_raw, "html.parser")
+        site_raw: requests.Response = requests.get(url_to_game)
+        while site_raw.status_code != 200:
+            print("Error in request, code " + str(site_raw.status_code) + ". Trying again...")
+            delay()
+            site_raw: requests.Response = requests.get(url_to_game)
+        sub_soup = BeautifulSoup(site_raw.content, "html.parser")
         # again, the info box is inconsistent among games so we
         # have to find all the h2 and traverse from that to the genre name
         h2s = sub_soup.find("div", {"id": "gameGenInfoBox"}).find_all('h2')
@@ -127,4 +149,4 @@ df = df[[
     'Rank', 'Name', 'Platform', 'Year', 'Genre',
     'Publisher', 'Developer', 'Critic_Score', 'User_Score',
     'NA_Sales', 'PAL_Sales', 'JP_Sales', 'Other_Sales', 'Global_Sales']]
-df.to_csv("vgsales.csv", sep=",", encoding='utf-8', index=False)
+df.to_csv(OUTPUT_FILENAME, sep=",", encoding='utf-8', index=False)
